@@ -6,6 +6,7 @@ import boto3
 import json
 import sqlalchemy
 from sqlalchemy import text
+import datetime
 
 
 random.seed(100)
@@ -55,15 +56,55 @@ def run_infinite_post_data_loop():
             for row in user_selected_row:
                 user_result = dict(row._mapping)
             
-            print(pin_result)
-            print(geo_result)
-            print(user_result)
+            pin_invoke_url = 'https://39plmt8rih.execute-api.us-east-1.amazonaws.com/milestone5/topics/0affc6b7559b.pin'
+            geo_invoke_url = "https://39plmt8rih.execute-api.us-east-1.amazonaws.com/milestone5/topics/0affc6b7559b.geo"
+            user_invoke_url = "https://39plmt8rih.execute-api.us-east-1.amazonaws.com/milestone5/topics/0affc6b7559b.user"
+
+            geo_result['timestamp'] = geo_result['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
+            user_result['date_joined'] = user_result['date_joined'].strftime("%Y-%m-%d %H:%M:%S")
+
+
+            pin_payload = json.dumps({
+                'records': [
+                    {
+                    'value': pin_result
+                    }
+                ]
+            })
+
+
+            geo_payload = json.dumps({
+                'records': [
+                    {
+                    'value': geo_result
+                    }
+                ]
+            })
+
+            user_payload = json.dumps({
+                'records': [
+                    {
+                    'value': user_result
+                    }
+                ]
+            })
+
+            headers = {'Content-Type': 'application/vnd.kafka.json.v2+json'}
+
+            pin_response = requests.request("POST", pin_invoke_url, headers=headers, data=pin_payload)
+            geo_response = requests.request("POST", geo_invoke_url, headers=headers, data=geo_payload)
+            user_response = requests.request("POST", user_invoke_url, headers=headers, data=user_payload)
+
+            print(pin_response.status_code)
+            print(geo_response.status_code)
+            print(user_response.status_code)
+
+
 
 
 if __name__ == "__main__":
     run_infinite_post_data_loop()
     print('Working')
-    
     
 
 

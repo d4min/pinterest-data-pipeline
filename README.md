@@ -112,10 +112,121 @@ sasl.client.callback.handler.class = software.amazon.msk.auth.iam.IAMClientCallb
 ./kafka-topics.sh --bootstrap-server BootstrapServerString --command-config client.properties --create --topic <topic_name>
 ```
 
-    
+## Connecting the MSK Cluster to an S3 Bucket   
 
+In this step we will use MSK Connect to connect the MSK cluster to an S3 bucket such that any data going through the cluster will be automatically saved and stored in a dedicated bucket. 
 
+MSK Connect allows you to deploy fully managed connectors that move data into or pull data from popular data stores like Amazon S3 which makes it extremely useful in conjuction with MSK clusters to efficiently feed or save data to and from our clusters. 
 
+After creating an S3 bucket with the appropriate permission policies we will go through the following steps to successfully connect our cluster with the S3 bucket: 
 
+1. The first step is to install the Confluent.io Amazon S3 Connector on our client machine, we can do this using the command line
 
+ ```bash
+# assume admin user privileges
+sudo -u ec2-user -i
+# create directory where we will save our connector 
+mkdir kafka-connect-s3 && cd kafka-connect-s3
+# download connector from Confluent
+wget https://d1i4a15mxbxib1.cloudfront.net/api/plugins/confluentinc/kafka-connect-s3/versions/10.0.3/confluentinc-kafka-connect-s3-10.0.3.zip
+# copy connector to our S3 bucket
+aws s3 cp ./confluentinc-kafka-connect-s3-10.0.3.zip s3://<BUCKET_NAME>/kafka-connect-s3/
+```
 
+If everything ran successfully you should be able to see the zip file in your S3 bucket using the AWS console. 
+
+We will use this package to create a custom plugin. 
+
+2. After the package has been saved in the S3 bucket we can navigate to the MSK console on AWS. Under the MSK connect section we will choose 'Create Custom Plugin' which will allow us to choose our desired bucket. Pick the bucket containing the zip file from the previous step and choose the zip file. Now we can click 'create plugin'. 
+
+ Once the plugin has been created we are now able to create the connector which will allow us to send data from the cluster to our S3 bucket. 
+
+3. Under the MSK Connect section in the MSK console there is a tab for called 'connectors' this will allow us to create a connector. Choose 'Create Connector' here. You will be asked to choose the plugin for the connector, click on the one we created in the previous step. Create a name for your connector and then choose your desired MSK cluster from the list. 
+
+After this we need to change the configuration settings for our connector. The configuration that will work in my case may be different to yours so you may need to edit it to your relevant configuration. 
+
+The configuration settings I will be using are: 
+
+ ```bash
+# assume admin user privileges
+connector.class=io.confluent.connect.s3.S3SinkConnector
+# same region as our bucket and cluster
+s3.region=us-east-1
+flush.size=1
+schema.compatibility=NONE
+tasks.max=3
+# include nomeclature of topic name, given here as an example will read all data from topic names starting with msk.topic....
+topics.regex=<YOUR_UUID>.*
+format.class=io.confluent.connect.s3.format.json.JsonFormat
+partitioner.class=io.confluent.connect.storage.partitioner.DefaultPartitioner
+value.converter.schemas.enable=false
+value.converter=org.apache.kafka.connect.json.JsonConverter
+storage.class=io.confluent.connect.s3.storage.S3Storage
+key.converter=org.apache.kafka.connect.storage.StringConverter
+s3.bucket.name=<BUCKET_NAME>
+```
+
+Leave most of the other configurations as default except for: 
+
+- Connector type change to Provisioned and make sure both the MCU count per worker and Number of workers are set to 1.
+- Worker Configuration, select Use a custom configuration, then pick confluent-worker.
+- Access permissions, where you should select the IAM role you have created previously.
+
+Skip the rest of the pages until you get to Create connector button page. Once your connector is up and running you will be able to visualise it in the Connectors tab in the MSK console.
+
+## Configuring an API in API Gateway
+
+To replicate Pinterest's experimental data pipeline we will need to configure an API. This API will send data to our MSK Cluster, which in turn will be stored in an S3 bucket using the connector we created in the previous step. 
+
+1. Navigate to the API Gateway console and create a REST API. The endpoint type we will be using for this project is Regional. 
+
+To provide a RESTful interface to our Kafka Cluster we will build a Kafka REST proxy integration into our API. To do this: 
+
+- First click the 'Create Resource' button on the API you have just created. 
+- Toggle the 'Proxy Resource' option to on. 
+- For resource name enter '{proxy+}', select Enable API Gateway CORS and click create resource. 
+
+![Screenshot](images/Create_Resource.png)
+
+For the previously created resource, create a HTTP ANY method. When setting up the Endpoint URL, make sure to copy the correct PublicDNS, from the EC2 machine you have been working
+
+Deploy the API and make a note of the Invoke URL, as you will need it in a later task.
+
+2. The second step is to set up the REST proxy on our EC2 Client machine.
+
+- Install the confluent package for the REST Proxy on your EC2 Client machine. 
+- Allow the REST proxy to perform IAM authentication to the MSK cluster by modifying the kafka-rest.properties file.
+- Start the REST proxy on the EC2 client machine.
+
+3. Finally we will modify the user_posting_emulation.py script to send data to our API using the API invoke URL. 
+
+- The first modification we need to make is regarding the 'timestamp' and 'date_joined' values in the geo and user data. This value is of type 'datetime' which is not supported by json. We can use the .strftime method in string class to convert this to string ready to be sent to our API.
+
+```python
+geo_result['timestamp'] = geo_result['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
+user_result['date_joined'] = user_result['date_joined'].strftime("%Y-%m-%d %H:%M:%S")
+```
+
+- After we have converted the datetime values we can begin constructing the content of our API request. 
+
+- The format our content will follow is: 
+```python
+pin_payload = json.dumps({
+    'records': [
+        {
+        'value': pin_result
+        }
+    ]
+})
+```
+- After the our API payload has been configured to be in the correct format we can begin sending requests. The API request will need 4 parameters. The request type, the API invoke URL, the headers and the content. 
+
+This is how the request will be structured:
+
+```python
+headers = {'Content-Type': 'application/vnd.kafka.json.v2+json'}
+
+pin_response = requests.request("POST", pin_invoke_url, headers=headers, data=pin_payload)
+```
+
+            
