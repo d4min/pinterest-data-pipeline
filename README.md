@@ -226,7 +226,53 @@ This is how the request will be structured:
 ```python
 headers = {'Content-Type': 'application/vnd.kafka.json.v2+json'}
 
+'''
+The 4 parameters sent in our request are:
+
+Request Type: 'POST'
+Invoke URL: 'pin_invoke_url'
+headers: {'Content-Type': 'application/vnd.kafka.json.v2+json'}
+data: 'pin_payload'
+'''
+
 pin_response = requests.request("POST", pin_invoke_url, headers=headers, data=pin_payload)
 ```
+### Sending data to our API:
 
-            
+After our script has been modified to make API requests we can begin sending data to our API, and in turn, our MSK Cluster. 
+
+1. To begin sending messages we need to first start the REST proxy. To do this we need to navigate to the 'confluent-7.2.0/bin' folder on our EC2 client machine. 
+
+```bash
+cd confluent-7.2.0/bin
+```
+Once here we will run the following command to start the rest proxy. 
+```bash
+./kafka-rest-start /home/ec2-user/confluent-7.2.0/etc/kafka-rest/kafka-rest.properties
+```
+The terminal should display the message 'INFO Server started, listening for requests...' 
+
+2. Once the REST proxy has started we need to create consumers for each of the topics we want to send data to in our cluster. 
+
+For this we will need to create new windows in our EC2 client machine. One for each of the topics we want to create consumers for. 
+
+To create a consumer, first navigate to the bin folder in your kafka installation
+
+The following command may be different for you depending on your Kafka version
+
+```bash
+cd kafka_2.12-2.8.1/bin/
+```
+Once in the bin folder we can run the following command to create a consumer
+
+```bash
+./kafka-console-consumer.sh --bootstrap-server BootstrapServerString --consumer.config client.properties --topic <topic_name> --from-beginning
+```
+You will need to add the relevant information to the command, including your bootstrap-server string and topic name. 
+
+After the REST proxy and the consumers have been created we can run our script to start sending data to our cluster. The messages should start displaying in the client machine window where the consumer is running. 
+
+For example, the consumer for our user data should display an output similar to this:
+```bash
+{"ind":2863,"first_name":"Dylan","last_name":"Holmes","age":32,"date_joined":"2016-10-23 14:06:51"}
+```
