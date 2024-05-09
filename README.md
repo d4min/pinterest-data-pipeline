@@ -184,7 +184,7 @@ To provide a RESTful interface to our Kafka Cluster we will build a Kafka REST p
 
 - First click the 'Create Resource' button on the API you have just created. 
 - Toggle the 'Proxy Resource' option to on. 
-- For resource name enter '{proxy+}', select Enable API Gateway CORS and click create resource. 
+- For resource name enter '{proxy+}', select Enable API Gateway CORS and click create resour,ce. 
 
 ![Screenshot](images/Create_Resource.png)
 
@@ -276,3 +276,304 @@ For example, the consumer for our user data should display an output similar to 
 ```bash
 {"ind":2863,"first_name":"Dylan","last_name":"Holmes","age":32,"date_joined":"2016-10-23 14:06:51"}
 ```
+## Mount the S3 Bucket to Databricks 
+
+In order to clean and query our batch data we need to read this data from our S3 bucket to our databricks account. 
+
+After using the IAM console to create a secret access key for your S3 bucket, download the secret access key in csv format and then upload this file to databricks. 
+
+Mounting the S3 bucket to databricks: 
+
+1. On the databricks console, click on 'new' and select notebook
+
+![Screenshot](images/Create_Notebook.png)
+
+2. In the notebook you just created, create a pyspark cell and import the following libraries 
+```python
+# pyspark functions
+from pyspark.sql.functions import *
+# URL processing
+import urllib
+```
+3. Now read the table containing the AWS keys to databricks
+```python
+# Define the path to the Delta table
+delta_table_path = "dbfs:/user/hive/warehouse/authentication_credentials"
+
+# Read the Delta table to a Spark DataFrame
+aws_keys_df = spark.read.format("delta").load(delta_table_path)
+```
+4. We can extract the access key and secret access key from the spark dataframe created above using the below code
+```python
+# Get the AWS access key and secret key from the spark dataframe
+ACCESS_KEY = aws_keys_df.select('Access key ID').collect()[0]['Access key ID']
+SECRET_KEY = aws_keys_df.select('Secret access key').collect()[0]['Secret access key']
+# Encode the secrete key
+ENCODED_SECRET_KEY = urllib.parse.quote(string=SECRET_KEY, safe="")
+```
+5. We can now mount the S3 bucket by passing in the S3 URL and the desired mount name to dbutils.fs.mount(). Make sure to replace the AWS_S3_BUCKET with the name of the bucket you have your data stored into, and MOUNT_NAME with the desired name inside your Databricks workspace.
+
+```python
+# AWS S3 bucket name
+AWS_S3_BUCKET = "bucket_name"
+# Mount name for the bucket
+MOUNT_NAME = "/mnt/mount_name"
+# Source url
+SOURCE_URL = "s3n://{0}:{1}@{2}".format(ACCESS_KEY, ENCODED_SECRET_KEY, AWS_S3_BUCKET)
+# Mount the drive
+dbutils.fs.mount(SOURCE_URL, MOUNT_NAME)
+```
+
+## Creating Spark Dataframes 
+
+Now that the S3 bucket has been mounted we can read data from there into a spark dataframe ready for cleaning and querying. 
+
+Using the following code we can create dataframes for each of our cluster topics
+
+```python
+%sql
+# Disable format checks during the reading of Delta tables
+SET spark.databricks.delta.formatCheck.enabled=false
+```
+
+```python 
+# File location and type
+# Asterisk(*) indicates reading all the content of the specified file that have .json extension
+file_location = "/mnt/mount_name/filepath_to_data_objects/*.json" 
+file_type = "json"
+# Ask Spark to infer the schema
+infer_schema = "true"
+# Read in JSONs from mounted S3 bucket
+df = spark.read.format(file_type) \
+.option("inferSchema", infer_schema) \
+.load(file_location)
+# Display Spark dataframe to check its content
+display(df)
+```
+
+For this project we created 3 dataframes, one for each of the topics:
+
+1. df_pin : contains all data about pinterest posts
+2. df_geo : contains all information regarding the geographic data of each post
+3. df_user : contains all data regarding users
+
+## Cleaning the dataframes
+
+### df_pin:
+
+The steps we took to clean the dataframe containing information about Pinterest posts are as follows:
+
+1. Replace empty entries and entries with no relevant data in each column with Nones
+
+```python 
+# Replaces empty entries and entries with no relevant data in each column with Nones
+
+df_pin = df_pin.na.replace({'No description available Story format': None, 'User Info Error': None, 'Image src error.': None, 'N,o, ,T,a,g,s, ,A,v,a,i,l,a,b,l,e': None, 'No Title Data Available': None})
+```
+
+2. Perform the necessary transformations on the follower_count column to ensure every entry is a number. Make sure the data type of this column is an int.
+
+```python 
+# Uses regular expressions to replace k (thousand) and M (million) with its numeric counterparts so we can cast the column type to integer
+
+df_pin = df_pin.withColumn('follower_count', regexp_replace('follower_count', 'k', '000'))
+
+df_pin = df_pin.withColumn('follower_count', regexp_replace('follower_count', 'M', '000000'))
+
+df_pin = df_pin.withColumn('follower_count', df_pin['follower_count'].cast('integer'))
+```
+3. Clean the data in the save_location column to include only the save location path
+
+```python
+# Uses split function to alter save_location column to only include the save location path
+
+save_location_split = split(df_pin['save_location'], ' ')
+
+df_pin = df_pin.withColumn('save_location', save_location_split.getItem(3))
+```
+
+4. Rename the index column to ind
+
+```python
+# Changes the name of 'index' column to 'ind' and reorders the columns.
+
+df_pin = df_pin.withColumnRenamed('index', 'ind')
+```
+
+### df_geo:
+
+The steps we took to clean the dataframe containing information about the geographic information about each post are as follows:
+
+1. Create a new column coordinates that contains an array based on the latitude and longitude columns
+
+```python 
+# Creates a new column 'coordinates' which is an array of the longitude and latitude values as well as reorders the columns
+
+df_geo = df_geo.select('ind', 'country', array('latitude', 'longitude').alias('coordinates'), 'timestamp')
+```
+
+2. Convert the timestamp column from a string to a timestamp data type
+
+```python
+# Casts the timestamp column to type timestamp
+
+df_geo = df_geo.withColumn('timestamp', df_geo['timestamp'].cast('timestamp'))
+```
+
+### df_user:
+
+The steps we took to clean the dataframe containing information about the users as follows:
+
+1. Create a new column user_name that concatenates the information found in the first_name and last_name columns
+
+```python 
+# Concatenates the first_name and last_name columns into one user_name column and reorders the columns into a more logical order
+
+df_user = df_user.select('ind', concat(df_user['first_name'], df_user['last_name']).alias('user_name'), 'age', 'date_joined')
+```
+
+2. Convert the date_joined column from a string to a timestamp data type
+
+```python 
+# Casts the date_joined column to type timestamp
+
+df_user = df_user.withColumn('date_joined', df_user['date_joined'].cast('timestamp'))
+```
+
+## Quering the dataframes
+
+With the cleaned dataframes we can extract useful insights from the data that can be used to make business decisions 
+
+### 1. Find the most popular Pinterest category people post to based on their country
+
+```python 
+# Joins the pintereset data df with geo data df so that we have access to both 'country' and 'category' data 
+
+joined_df = df_pin.join(df_geo, df_pin['ind'] == df_geo['ind'], how='inner')
+
+# Groups the joined_df based on country and category and counts the instances of each category in each country
+
+grouped_df = joined_df.groupBy('country', 'category').agg(count('category').alias('category_count'))
+
+# Retrieves the most posted about category from each country 
+
+result_df = grouped_df.groupBy('country').agg(max('category_count').alias('category_count'), first('category').alias('category')).orderBy('category_count', ascending=False)
+
+# Rearranges columns to a more logical order
+
+result_df = result_df.select('country', 'category', 'category_count')
+
+display(result_df)
+```
+The results from the query show: 
+
+![Screenshot](images/query_1.png)
+
+### 2. Find which was the most popular category each year
+
+```python 
+# Joins the pintereset data df with geo data df so that we have access to both 'timestamp' and 'category' data 
+
+joined_df = df_pin.join(df_geo, df_pin['ind'] == df_geo['ind'], how='inner')
+
+# Creates a new column containing only the year of the post by using the year() function
+
+joined_df = joined_df.withColumn('year', year(joined_df['timestamp']))
+
+# Groups rows by 'year' and 'category' and counts the instances of each category in each year
+
+grouped_df = joined_df.groupBy('year', 'category').agg(count('category').alias('category_count'))
+
+# Retrieves the most popular category from each year
+
+result_df = grouped_df.groupBy('year').agg(max(grouped_df['category_count']).alias('category_count'), first('category').alias('category')).orderBy('year', ascending=False)
+
+# Rearranges columns to a more logical order
+
+result_df = result_df.select('year', 'category', 'category_count')
+
+display(result_df)
+```
+
+The results of the query show: 
+
+![Screenshot](images/query_2.png)
+
+### 3. Find the user with the most followers in each country and subsequently the country with the user with the most followers
+
+```python
+# Find the user with the most followers in each country
+
+# Joins the df_pin and df_geo df's so we have access to columns 'follower_count' and 'country'
+
+pin_geo_df = df_pin.join(df_geo, df_pin['ind'] == df_geo['ind'], how='inner').drop(df_geo['ind'])
+
+# Joins the df created from above join to the df_user df so we have access to 'user_name' column
+
+joined_df = pin_geo_df.join(df_user, pin_geo_df['ind'] == df_user['ind'], how='inner')
+
+# Groups rows based on user_name and country and returns the highest instance of follower_count for each user 
+
+grouped_df = joined_df.groupBy('user_name', 'country').agg(max(joined_df['follower_count']).alias('follower_count'))
+
+# Groups the above df rows by country and returns the user with the highest follower count in each country
+
+result_df = grouped_df.groupBy('country').agg(max(grouped_df['follower_count']).alias('follower_count'), first('user_name').alias('poster_name')).orderBy('follower_count', ascending=False)
+
+# Rearranges columns to a more logical order
+
+result_df = result_df.select('poster_name', 'country', 'follower_count')
+
+# Returns the country and follower_count data from the user with the highest follower_count
+
+second_result_df = result_df.agg(max('follower_count').alias('follower_count'), first('country').alias('country'))
+second_result_df = second_result_df.select('country', 'follower_count')
+
+display(result_df)
+display(second_result_df)
+```
+
+The results of the first query show: 
+
+![Screenshot](images/query_3.png)
+
+The results of the second query show:
+
+![Screenshot](images/query_3_5.png)
+
+### 4. Find the most popular category for different age groups 
+
+```python
+# Joins df_pin and df_user df's so we have access to 'age' and 'category' data
+
+joined_df = df_pin.join(df_user, df_pin['ind'] == df_user['ind'])
+
+# Function to split rows into a category of age range depending on the age of the user for the corresponding post
+
+age_range = udf(lambda age: '18-24' if age < 25  else
+                '25-35' if (age >= 25 and age < 36) else
+                '36-50' if (age >= 36 and age < 51) else
+                '+50')
+
+# Applies the above function to the df
+
+joined_df = joined_df.withColumn('age_range', age_range(joined_df['age']))
+
+# Groups the df based on age_range and category and performs an aggregation function to count how many posts about each category are made in each age range
+
+grouped_df = joined_df.groupBy('age_range', 'category').agg(count('category').alias('category_count'))
+
+# Retrieves the category with the most posts per age group
+
+result_df = grouped_df.groupBy('age_range').agg(max('category_count').alias('category_count'), first('category').alias('category')).orderBy('category_count', ascending=False)
+
+# Rearranges columns to a more logical order 
+
+result_df = result_df.select('age_range', 'category', 'category_count')
+
+display(result_df)
+```
+
+The results of the first query show: 
+
+![Screenshot](images/query_4.png)
