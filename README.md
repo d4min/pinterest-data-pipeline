@@ -574,6 +574,24 @@ result_df = result_df.select('age_range', 'category', 'category_count')
 display(result_df)
 ```
 
-The results of the first query show: 
+The results of the query show: 
 
 ![Screenshot](images/query_4.png)
+
+### 5. Find how many users have joined each year 
+
+```python
+# Creates a new column containing only the year of the post by using the year() function
+
+year_df = df_user.withColumn('year', year(joined_df['date_joined']))
+
+# Groups by year and counts how many users have joined that year
+
+grouped_df = year_df.groupBy('year').agg(count('user_name').alias('users_joined'))
+
+display(grouped_df)
+```
+
+The results of the query show: 
+
+![Screenshot](images/query_5.png)
