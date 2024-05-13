@@ -96,6 +96,7 @@ def run_infinite_post_data_loop():
             user_response = requests.request("POST", user_invoke_url, headers=headers, data=user_payload)
 
             print(pin_response.status_code)
+            print(pin_response.content)
             print(geo_response.status_code)
             print(user_response.status_code)
 
