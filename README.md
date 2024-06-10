@@ -595,3 +595,4 @@ display(grouped_df)
 The results of the query show: 
 
 ![Screenshot](images/query_5.png)
+hello 

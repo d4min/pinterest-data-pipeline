@@ -91,15 +91,17 @@ def run_infinite_post_data_loop():
 
             headers = {'Content-Type': 'application/vnd.kafka.json.v2+json'}
 
-            pin_response = requests.request("POST", pin_invoke_url, headers=headers, data=pin_payload)
-            geo_response = requests.request("POST", geo_invoke_url, headers=headers, data=geo_payload)
-            user_response = requests.request("POST", user_invoke_url, headers=headers, data=user_payload)
+            #pin_response = requests.request("POST", pin_invoke_url, headers=headers, data=pin_payload)
+            ##geo_response = requests.request("POST", geo_invoke_url, headers=headers, data=geo_payload)
+            #user_response = requests.request("POST", user_invoke_url, headers=headers, data=user_payload)
 
+            print(pin_payload)
+            '''
             print(pin_response.status_code)
             print(pin_response.content)
             print(geo_response.status_code)
             print(user_response.status_code)
-
+            '''
 
 
 
