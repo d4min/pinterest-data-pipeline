@@ -595,4 +595,15 @@ display(grouped_df)
 The results of the query show: 
 
 ![Screenshot](images/query_5.png)
-hello 
+
+
+## Orchestrate Batch Processing using Airflow
+
+Apache Airflow is a task-orchestration tool that allows you to define a series of tasks to be executed in a specific order. The tasks can be run in a distributed manner using Airflow's scheduler.
+
+In Airflow you use Directed Acyclic Graphs (DAGs) to define a workflow. Each node in the DAG corresponds to a task, and they will be connected to one another. 
+
+
+
+
+
